@@ -564,3 +564,181 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
     }
     vis.UpdateGeometry();
     vis.Run();*/
+
+
+
+
+
+
+//    float progress = 0.0;
+//    while (progress < 1.0) {
+//        int barWidth = 70;
+    
+//        std::cout << "[";
+//        int pos = barWidth * progress;
+//        for (int i = 0; i < barWidth; ++i) {
+//            if (i < pos) std::cout << "=";
+//            else if (i == pos) std::cout << ">";
+//            else std::cout << " ";
+//        }
+//        std::cout << "] " << int(progress * 100.0) << " %\r";
+//        std::cout.flush();
+    
+//        progress += 0.16; // for demonstration only
+//    }
+//    std::cout << std::endl;
+    
+/*    std::shared_ptr< geometry::RGBDImage > (*CreateRGBDImage)( const geometry::Image&, const geometry::Image&, bool );
+    CreateRGBDImage = &geometry::RGBDImage::CreateFromRedwoodFormat;
+        // Redwood format
+    auto color = io::CreateImageFromFile( "color_00000.jpg" );
+    auto depth = io::CreateImageFromFile( "depth_00000.png" );
+    auto RGBD0 = CreateRGBDImage( *color, *depth, true );
+    color = io::CreateImageFromFile( "color_00001.jpg" );
+    depth = io::CreateImageFromFile( "depth_00001.png" );
+    auto RGBD1 = CreateRGBDImage( *color, *depth, true );
+    color = io::CreateImageFromFile( "color_00002.jpg" );
+    depth = io::CreateImageFromFile( "depth_00002.png" );
+    auto RGBD2 = CreateRGBDImage( *color, *depth, true );
+    color = io::CreateImageFromFile( "color_00003.jpg" );
+    depth = io::CreateImageFromFile( "depth_00003.png" );
+    auto RGBD3 = CreateRGBDImage( *color, *depth, true );
+    color = io::CreateImageFromFile( "color_00004.jpg" );
+    depth = io::CreateImageFromFile( "depth_00004.png" );
+    auto RGBD4 = CreateRGBDImage( *color, *depth, true );
+        // SUN format
+    auto color_SUN = io::CreateImageFromFile( "SUN_color.jpg" );
+    auto depth_SUN = io::CreateImageFromFile( "SUN_depth.png" );
+        // NYU format
+//    auto color_NYU = io::CreateImageFromFile( "NYU_color.ppm" );
+//    auto depth_NYU = io::CreateImageFromFile( "NYU_depth.pgm" );
+        // NYU format
+    auto color_TUM = io::CreateImageFromFile( "TUM_color.png" );
+    auto depth_TUM = io::CreateImageFromFile( "TUM_depth.png" );
+    
+    vector< uint8_t > color_data = RGBD0->color_.data_;
+    int H = RGBD0->color_.height_;
+    int W = RGBD0->color_.width_;
+//    int numC = RGBD0->color_.num_of_channels_;
+//    int bytC = RGBD0->color_.bytes_per_channel_;
+    vector< uint8_t > depth_data = RGBD0->depth_.data_;
+    Mat test = Mat( H, W, CV_8UC4, &RGBD0->color_.data_, 4 );
+    cvtColor( test, test, COLOR_RGBA2BGR ); // COLOR_RGBA2BGR
+    imshow( "test", test );
+    //waitKey(0);
+    if( waitKey(0) == 27 ) exit(0);
+    
+    //CreateRGBDImage = &geometry::RGBDImage::CreateFromSUNFormat;
+    //CreateRGBDImage = &geometry::RGBDImage::CreateFromNYUFormat;
+    //CreateRGBDImage = &geometry::RGBDImage::CreateFromTUMFormat;
+    
+    CreateRGBDImage = &geometry::RGBDImage::CreateFromSUNFormat;
+    auto RGBD_SUN = CreateRGBDImage( *color_SUN, *depth_SUN, true );
+    
+//    CreateRGBDImage = &geometry::RGBDImage::CreateFromNYUFormat;
+//    auto RGBD_NYU = CreateRGBDImage( *color_NYU, *depth_NYU, true );
+    
+    CreateRGBDImage = &geometry::RGBDImage::CreateFromTUMFormat;
+    auto RGBD_TUM = CreateRGBDImage( *color_TUM, *depth_TUM, true );
+    
+    odometry::OdometryOption option;
+    Eigen::Matrix4d odo_init = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d trans_odo = Eigen::Matrix4d::Identity();
+    Eigen::Matrix4d Rt = Eigen::Matrix4d::Identity();
+    Eigen::Matrix6d info_odo = Eigen::Matrix6d::Zero();
+    bool is_success;
+    camera::PinholeCameraIntrinsic intrinsic;
+    intrinsic = camera::PinholeCameraIntrinsic( camera::PinholeCameraIntrinsicParameters::PrimeSenseDefault );
+    
+    odometry::RGBDOdometryJacobianFromColorTerm jacobian_method;
+    
+    shared_ptr< geometry::PointCloud > cloud_RGBD ( new geometry::PointCloud );
+    //auto cloud_RGBD = geometry::PointCloud::CreateFromRGBDImage( *RGBD1, intrinsic );
+    //auto cloud_RGBD = make_shared< geometry::PointCloud >();
+    shared_ptr< geometry::PointCloud > cloud_RGBD0;
+    cloud_RGBD0 = geometry::PointCloud::CreateFromRGBDImage( *RGBD0, intrinsic );
+    cloud_RGBD0->Transform( Rt );
+    auto coord0 = geometry::TriangleMesh::CreateCoordinateFrame( 0.2, Vector3d( 0.0, 0.0, 0.0 ) );
+    coord0->Transform( Rt );
+    *cloud_RGBD += *cloud_RGBD0;
+            
+    std::tie( is_success, trans_odo, info_odo ) = odometry::ComputeRGBDOdometry( *RGBD1, *RGBD0, intrinsic,
+                                                                                 odo_init, jacobian_method,
+                                                                                 option );
+    Rt *= trans_odo;
+    shared_ptr< geometry::PointCloud > cloud_RGBD1;
+    cloud_RGBD1 = geometry::PointCloud::CreateFromRGBDImage( *RGBD1, intrinsic );
+    cloud_RGBD1->Transform( Rt );
+    auto coord1 = geometry::TriangleMesh::CreateCoordinateFrame( 0.2, Vector3d( 0.0, 0.0, 0.0 ) );
+    coord1->Transform( Rt );
+    *cloud_RGBD += *cloud_RGBD1;
+    
+    std::tie( is_success, trans_odo, info_odo ) = odometry::ComputeRGBDOdometry( *RGBD2, *RGBD1, intrinsic,
+                                                                                 odo_init, jacobian_method,
+                                                                                 option );
+    Rt *= trans_odo;
+    shared_ptr< geometry::PointCloud > cloud_RGBD2;
+    cloud_RGBD2 = geometry::PointCloud::CreateFromRGBDImage( *RGBD2, intrinsic );
+    cloud_RGBD2->Transform( Rt );
+    auto coord2 = geometry::TriangleMesh::CreateCoordinateFrame( 0.2, Vector3d( 0.0, 0.0, 0.0 ) );
+    coord2->Transform( Rt );
+    *cloud_RGBD += *cloud_RGBD2;
+    
+    std::tie( is_success, trans_odo, info_odo ) = odometry::ComputeRGBDOdometry( *RGBD3, *RGBD2, intrinsic,
+                                                                                 odo_init, jacobian_method,
+                                                                                 option );
+    Rt *= trans_odo;
+    shared_ptr< geometry::PointCloud > cloud_RGBD3;
+    cloud_RGBD3 = geometry::PointCloud::CreateFromRGBDImage( *RGBD3, intrinsic );
+    cloud_RGBD3->Transform( Rt );
+    auto coord3 = geometry::TriangleMesh::CreateCoordinateFrame( 0.2, Vector3d( 0.0, 0.0, 0.0 ) );
+    coord3->Transform( Rt );
+    *cloud_RGBD += *cloud_RGBD3;
+    
+    std::tie( is_success, trans_odo, info_odo ) = odometry::ComputeRGBDOdometry( *RGBD4, *RGBD3, intrinsic,
+                                                                                 odo_init, jacobian_method,
+                                                                                 option );
+    Rt *= trans_odo;
+    shared_ptr< geometry::PointCloud > cloud_RGBD4;
+    cloud_RGBD4 = geometry::PointCloud::CreateFromRGBDImage( *RGBD4, intrinsic );
+    cloud_RGBD4->Transform( Rt );
+    auto coord4 = geometry::TriangleMesh::CreateCoordinateFrame( 0.2, Vector3d( 0.0, 0.0, 0.0 ) );
+    coord4->Transform( Rt );
+    *cloud_RGBD += *cloud_RGBD4;
+    
+    
+    
+    shared_ptr< geometry::PointCloud > cloud_RGBD_SUN;
+    cloud_RGBD_SUN = geometry::PointCloud::CreateFromRGBDImage( *RGBD_SUN, intrinsic );
+    
+//    shared_ptr< geometry::PointCloud > cloud_RGBD_NYU;
+//    cloud_RGBD_NYU = geometry::PointCloud::CreateFromRGBDImage( *RGBD_NYU, intrinsic );
+    
+    shared_ptr< geometry::PointCloud > cloud_RGBD_TUM;
+    cloud_RGBD_TUM = geometry::PointCloud::CreateFromRGBDImage( *RGBD_TUM, intrinsic );
+    
+    
+    visualization::Visualizer vis_RGBD;
+    vis_RGBD.CreateVisualizerWindow( "Open3D_Lidar", 1600, 900, 50, 50 );
+    coord0->ComputeVertexNormals();
+    coord1->ComputeVertexNormals();
+    coord2->ComputeVertexNormals();
+    coord3->ComputeVertexNormals();
+    coord4->ComputeVertexNormals();
+    vis_RGBD.AddGeometry( coord0 );
+    vis_RGBD.AddGeometry( coord1 );
+    vis_RGBD.AddGeometry( coord2 );
+    vis_RGBD.AddGeometry( coord3 );
+    vis_RGBD.AddGeometry( coord4 );
+    PaintGrid( vis_RGBD, 5, 0.5 );
+    vis_RGBD.AddGeometry( cloud_RGBD );
+//    vis_RGBD.AddGeometry( cloud_RGBD0 );
+//    vis_RGBD.AddGeometry( cloud_RGBD1 );
+//    vis_RGBD.AddGeometry( cloud_RGBD2 );
+//    vis_RGBD.AddGeometry( cloud_RGBD3 );
+//    vis_RGBD.AddGeometry( cloud_RGBD4 );
+//    vis_RGBD.AddGeometry( cloud_RGBD_SUN );
+//    vis_RGBD.AddGeometry( cloud_RGBD_NYU );
+//    vis_RGBD.AddGeometry( cloud_RGBD_TUM );
+    
+    vis_RGBD.Run();*/
