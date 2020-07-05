@@ -300,7 +300,7 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
         Mat depth[3];
         split( points3D, depth );
         
-        // --- Odometry
+        // --- RGBD odometry with opencv
         cout << i << ": \n";
         if (i > 0)
         {
