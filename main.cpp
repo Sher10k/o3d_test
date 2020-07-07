@@ -4,6 +4,7 @@
 #include <vector>
 #include <fstream>
 #include <chrono>
+#include <tuple>
 
 // Eigen
 #include <Eigen/Eigen>
@@ -30,6 +31,8 @@ using namespace Eigen;
 
 #define RESIZE_WIDTH 1280
 #define RESIZE_HEIGHT 720
+
+#define ODOMETRY 1 // 0 - OPENCV, 1 - OPEN3D
 
 class Timer
 {
@@ -224,7 +227,7 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
     
     // --- Visualization
     visualization::Visualizer vis;
-    vis.CreateVisualizerWindow( "Open3D_odometry", 1600, 900, 50, 50 );
+    vis.CreateVisualizerWindow( "RGBD_odometry", 1600, 900, 50, 50 );
     // Add Coordinate
     auto coord = geometry::TriangleMesh::CreateCoordinateFrame( 1.0, Vector3d( 0.0, 0.0, 0.0 ) );
     coord->ComputeVertexNormals();
@@ -241,20 +244,42 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
     vis.AddGeometry( cloudTline );
     Vector3d colorTpoint = Vector3d(1.0, 0.0, 0.0);
     Vector3d colorTline = Vector3d(1.0, 1.0, 0.0);
-    vector< Mat > trajectory;
     Eigen::Matrix4d Rt;
+    // Parameters for odometry
+    double minDepth = 0.0;
+    double maxDepth = 400.0;
+    double maxDepthDiff = 0.15;
+    std::vector< int > iterCounts = {20,10,5};
     
-    // --- Create rgbd odometry by camera matrix
+    // --- Create rgbd odometry
+#if (ODOMETRY == 0)     // opencv
+    vector< Mat > trajectory;
     RgbdOdometry rgbdOdom( mtxL,                        // cameraMatrix
-                           10.0f,                        // minDepth = 0
-                           400.0f,                      // maxDepth = 4
-                           0.15f,                       // maxDepthDiff = 0.07
-                           vector< int >(),             // iterCounts
+                           minDepth,                        // minDepth = 0
+                           maxDepth,                      // maxDepth = 4
+                           maxDepthDiff,                       // maxDepthDiff = 0.07
+                           iterCounts,             // iterCounts
                            vector< float >(),           // minGradientMagnitudes
                            0.2f,                       // maxPointsPart = 0.07 to 1.0
                            Odometry::RIGID_BODY_MOTION  // transformType = RIGID_BODY_MOTION
                            );
     OdometryFrame preOFrame;
+#elif (ODOMETRY == 1)  // open3d
+    vector< Matrix4d > trajectory;
+//    Eigen::Matrix4d odo_init = Eigen::Matrix4d::Identity();
+//    Eigen::Matrix4d trans_odo = Eigen::Matrix4d::Identity();
+    Eigen::Matrix6d info_odo = Eigen::Matrix6d::Zero();
+    bool is_success;
+    camera::PinholeCameraIntrinsic intrinsic( width, height, 
+                                              mtxL.at<double>(0,0), mtxL.at<double>(1,1),
+                                              mtxL.at<double>(0,2), mtxL.at<double>(1,2));
+    odometry::RGBDOdometryJacobianFromColorTerm jacobian_method;
+    odometry::OdometryOption option( iterCounts,
+                                     maxDepthDiff,
+                                     minDepth,
+                                     maxDepth );
+    std::shared_ptr< open3d::geometry::RGBDImage > preOFrame;
+#endif
     
     // Timer
     double sumTime = 0;
@@ -282,8 +307,8 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
         
         // Scaled to float
         Mat imgDisp32;
-        imgDisp.convertTo( imgDisp32, CV_32FC1 );
-        imgDisp32 /= 16;
+        imgDisp.convertTo( imgDisp32, CV_32FC1, 1.0/16 );
+//        imgDisp32 /= 16;
         
         double minVal; double maxVal;
         minMaxLoc( imgDisp32, &minVal, &maxVal );
@@ -300,8 +325,8 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
         Mat depth[3];
         split( points3D, depth );
         
-        // --- RGBD odometry with opencv
         cout << i << ": \n";
+#if (ODOMETRY == 0)     // --- RGBD odometry with opencv
         if (i > 0)
         {
             // Create next odometry frame (img + depth)
@@ -310,7 +335,9 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
             // Next camera coordinates
             Mat Rtn;
             Timer time;
-            rgbdOdom.compute( preOFrame.image, preOFrame.depth, preOFrame.mask, nextOFrame.image, nextOFrame.depth, nextOFrame.mask, Rtn, trajectory[i-1] );
+            rgbdOdom.compute( preOFrame.image, preOFrame.depth, preOFrame.mask, 
+                              nextOFrame.image, nextOFrame.depth, nextOFrame.mask, 
+                              Rtn, trajectory[i-1] );
             double nowTime = time.elapsed();
             sumTime += nowTime;
             cout << "Time taken: " << nowTime << " c\n";
@@ -347,6 +374,64 @@ int main( int argc, char *argv[] )    //int argc, char *argv[]
             cloudTpoint->colors_.push_back( colorTpoint );
             cloudTline->points_.push_back( Vector3d( Rt(0,3), Rt(1,3), Rt(2,3) ) );
         }
+#elif (ODOMETRY == 1)       // --- RGBD odometry with open3d
+        if (i > 0)
+        {
+            // Create next odometry frame (img + depth)
+            geometry::Image nextImg;
+            nextImg.Prepare( width, height, 3, sizeof(uint8_t) );
+            std::copy( imgRemapL.datastart, imgRemapL.dataend, nextImg.data_.data() );
+            geometry::Image nextDepth;
+            nextDepth.Prepare( width, height, 1, sizeof(uint32_t) );
+            std::copy( depth[2].datastart, depth[2].dataend, nextDepth.data_.data() );
+            std::shared_ptr< open3d::geometry::RGBDImage > nextOFrame = open3d::geometry::RGBDImage::CreateFromColorAndDepth( nextImg, nextDepth );
+            
+            // Next camera coordinates
+            Eigen::Matrix4d nextRt;
+            Timer time;
+            std::tie( is_success, nextRt, info_odo ) = odometry::ComputeRGBDOdometry( *preOFrame, *nextOFrame, intrinsic,
+                                                                                      trajectory[i-1], jacobian_method,
+                                                                                      option );
+            double nowTime = time.elapsed();
+            sumTime += nowTime;
+            cout << "Time taken: " << nowTime << " c\n";
+            trajectory.push_back( nextRt );
+            Rt *= nextRt;
+            
+            // Save next odometry frame
+            preOFrame = nextOFrame;
+            
+            // Add trajectory point & line
+            cloudTpoint->points_.push_back( Vector3d( Rt(0,3), Rt(1,3), Rt(2,3) ) );
+            cloudTpoint->colors_.push_back( colorTpoint );
+            cloudTline->points_.push_back( Vector3d( Rt(0,3), Rt(1,3), Rt(2,3) ) );
+            cloudTline->lines_.push_back( Vector2i( i-1, i ) );
+            cloudTline->colors_.push_back( colorTline );
+        }
+        else    // First pass
+        {
+            // Create basic odometry frame (img + depth)
+            geometry::Image preImg;
+            preImg.Prepare( width, height, 3, sizeof(uint8_t) );
+            std::copy( imgRemapL.datastart, imgRemapL.dataend, preImg.data_.data() );
+            geometry::Image preDepth;
+            preDepth.Prepare( width, height, 1, sizeof(uint32_t) );
+            std::copy( depth[2].datastart, depth[2].dataend, preDepth.data_.data() );   // ----ERROR
+            preOFrame = open3d::geometry::RGBDImage::CreateFromColorAndDepth( preImg, preDepth );
+            
+            // Basic camera coordinates
+            Eigen::Matrix4d firstRt = Eigen::Matrix4d::Identity();
+            trajectory.push_back( firstRt );
+            Rt = firstRt;
+            
+            // Add trajectory point & line
+            cloudTpoint->points_.push_back( Vector3d( Rt(0,3), Rt(1,3), Rt(2,3) ) );
+            cloudTpoint->colors_.push_back( colorTpoint );
+            cloudTline->points_.push_back( Vector3d( Rt(0,3), Rt(1,3), Rt(2,3) ) );
+        }
+#endif
+        
+        
 //        cout << trajectory[i] << "\n\n";
 //        cout << Rt << "\n";
         cout << Rt(0,3) << " | " << Rt(1,3) << " | " << Rt(2,3) << "\n\n";   
